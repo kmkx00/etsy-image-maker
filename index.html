@@ -1,0 +1,556 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>My Etsy Clipart Image Generator</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f4f1ed;color:#425c73;font-family:Arial,sans-serif}
+main{max-width:700px;margin:auto;padding:20px}
+h1{font-family:Georgia,serif;font-weight:normal;font-size:32px;margin-bottom:8px}
+h2{font-size:18px;margin-top:0}
+.panel{background:white;border:1px solid #ddd5cb;border-radius:14px;padding:18px;margin:16px 0}
+label{display:block;font-weight:bold;font-size:13px;margin:12px 0 6px}
+input[type=text],input[type=file]{width:100%;padding:12px;border:1px solid #c9d2d9;border-radius:8px;font-size:16px}
+button{background:#425c73;color:white;border:0;border-radius:9px;padding:13px 16px;font-size:15px;font-weight:bold;width:100%;margin:7px 0}
+button:disabled{opacity:.4}
+.small{font-size:13px;color:#667786;line-height:1.6}
+#status,#progress{white-space:pre-wrap;font-size:13px;line-height:1.6}
+#thumbs{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-top:12px}
+.thumb{border:1px solid #e0e7ea;border-radius:7px;padding:5px;text-align:center}
+.thumb img{width:100%;aspect-ratio:1;object-fit:contain}
+.thumb span{font-size:10px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#preview{width:100%;max-width:550px;display:block;margin:auto;border:1px solid #ddd5cb}
+#pages{display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin:12px 0}
+#pages button{font-size:12px;padding:10px 2px;background:#e6eef3;color:#425c73}
+#pages button.active{background:#425c73;color:white}
+.colors{display:flex;gap:18px;flex-wrap:wrap}
+.colors label{font-size:12px}
+input[type=color]{width:46px;height:40px;display:block}
+</style>
+</head>
+<body>
+<main>
+<h1>Something Blue 💙</h1>
+<p>My reusable Etsy clipart listing image generator</p>
+
+<section class="panel">
+<h2>1. Choose Your Original Artwork</h2>
+<p class="small">Select exactly 13 PNG files. They are processed locally in your browser.</p>
+<input id="files" type="file" accept=".png,image/png" multiple>
+<p id="status">No files selected.</p>
+<div id="thumbs"></div>
+</section>
+
+<section class="panel">
+<h2>2. Customize Your Collection</h2>
+<label>Collection Name</label>
+<input type="text" id="title" value="Something Blue">
+<label>Subtitle</label>
+<input type="text" id="subtitle" value="BRIDAL CLIPART COLLECTION">
+<label>Brand Colors</label>
+<div class="colors">
+<label>Text <input type="color" id="dark" value="#425C73"></label>
+<label>Accent <input type="color" id="accent" value="#E6EEF3"></label>
+<label>Background <input type="color" id="bg" value="#F9F7F3"></label>
+</div>
+<button id="generate" disabled>Generate My 8 Etsy Images</button>
+<p id="progress">Upload your artwork to begin.</p>
+</section>
+
+<section class="panel" id="results" hidden>
+<h2>3. Preview & Download</h2>
+<img id="preview" alt="Etsy image preview">
+<div id="pages"></div>
+<button id="saveOne">Save Selected Image</button>
+<button id="saveAll">Save All 8 Images (ZIP)</button>
+<p class="small">On an iPhone or iPad, choose "Save to Files" if the Share menu opens. Otherwise check Safari Downloads.</p>
+</section>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const W=2000;
+const pageNames=[
+"Cover","All 13","Details","Invitation",
+"File Info","Download","Usage","Showcase"
+];
+let artwork=[],exports=[],zipBlob=null,selected=0;
+let previewURL=null;
+let working=false;
+
+function status(s){$("status").textContent=s}
+function progress(s){$("progress").textContent=s}
+
+function readImage(blob){
+ return new Promise((resolve,reject)=>{
+  const url=URL.createObjectURL(blob);
+  const img=new Image();
+  img.onload=()=>resolve({img,url});
+  img.onerror=()=>{
+   URL.revokeObjectURL(url);
+   reject(new Error("Could not decode image"));
+  };
+  img.src=url;
+ });
+}
+
+function canvasBlob(canvas,type,quality){
+ return new Promise((resolve,reject)=>{
+  canvas.toBlob(
+   b=>b?resolve(b):reject(new Error("Canvas export failed")),
+   type,quality
+  );
+ });
+}
+
+// Create a smaller working copy for marketing previews.
+// The uploaded original PNG is never overwritten.
+async function preparePNG(file){
+ const source=await readImage(file);
+ try{
+  const img=source.img;
+  const sw=img.naturalWidth,sh=img.naturalHeight;
+  if(!sw||!sh)throw new Error("Invalid dimensions");
+
+  // Estimate the visible artwork bounds.
+  const sample=document.createElement("canvas");
+  sample.width=220;sample.height=220;
+  const sc=sample.getContext("2d",{willReadFrequently:true});
+  sc.drawImage(img,0,0,220,220);
+  const pixels=sc.getImageData(0,0,220,220).data;
+
+  let left=220,top=220,right=-1,bottom=-1;
+  for(let y=0;y<220;y++){
+   for(let x=0;x<220;x++){
+    if(pixels[(y*220+x)*4+3]>15){
+     left=Math.min(left,x);top=Math.min(top,y);
+     right=Math.max(right,x);bottom=Math.max(bottom,y);
+    }
+   }
+  }
+
+  if(right<0)throw new Error("Image appears fully transparent");
+
+  const x=Math.max(0,(left-1)*sw/220);
+  const y=Math.max(0,(top-1)*sh/220);
+  const bw=Math.min(sw-x,(right-left+3)*sw/220);
+  const bh=Math.min(sh-y,(bottom-top+3)*sh/220);
+
+  const c=document.createElement("canvas");
+  c.width=1100;c.height=1100;
+  const ctx=c.getContext("2d");
+  const scale=Math.min(1000/bw,1000/bh);
+  const dw=bw*scale,dh=bh*scale;
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality="high";
+  ctx.drawImage(img,x,y,bw,bh,550-dw/2,550-dh/2,dw,dh);
+
+  const blob=await canvasBlob(c,"image/png");
+  const result=await readImage(blob);
+  return {...result,name:file.name};
+ }finally{
+  URL.revokeObjectURL(source.url);
+  source.img.src="";
+ }
+}
+
+function resetResults(){
+ exports=[];zipBlob=null;
+ $("results").hidden=true;
+ if(previewURL){
+  URL.revokeObjectURL(previewURL);
+  previewURL=null;
+ }
+}
+
+$("files").addEventListener("change",async e=>{
+ if(working)return;
+ working=true;
+ resetResults();
+ $("generate").disabled=true;
+
+ artwork.forEach(a=>URL.revokeObjectURL(a.url));
+ artwork=[];
+ $("thumbs").replaceChildren();
+
+ const files=Array.from(e.target.files||[])
+  .sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
+
+ if(files.length!==13){
+  status("Please select exactly 13 PNG files. Selected: "+files.length);
+  working=false;
+  return;
+ }
+
+ const errors=[];
+ for(let i=0;i<files.length;i++){
+  const f=files[i];
+  status("Reading "+(i+1)+" of 13: "+f.name);
+
+  try{
+   if(!/\.png$/i.test(f.name))
+    throw new Error("Not a PNG file");
+
+   const item=await preparePNG(f);
+   artwork.push(item);
+
+   const div=document.createElement("div");
+   div.className="thumb";
+   const im=document.createElement("img");
+   im.src=item.url;
+   const txt=document.createElement("span");
+   txt.textContent=item.name;
+   div.append(im,txt);
+   $("thumbs").append(div);
+
+  }catch(err){
+   errors.push(f.name+": "+err.message);
+  }
+ }
+
+ working=false;
+
+ if(errors.length){
+  status("Read "+artwork.length+" of 13 files.\nProblem files:\n"+errors.join("\n"));
+  progress("Please replace the problem files and select all 13 again.");
+ }else{
+  status("✓ All 13 original PNG files are ready!");
+  progress("Tap Generate My 8 Etsy Images.");
+  $("generate").disabled=false;
+ }
+});
+
+function text(c,s,x,y,size,serif=false,maxWidth=1750,bold=false){
+ c.textAlign="center";
+ c.textBaseline="middle";
+ c.fillStyle=$("dark").value;
+ let fs=size;
+ do{
+  c.font=(bold?"bold ":"")+fs+"px "+(serif?"Georgia,serif":"Arial,sans-serif");
+  if(c.measureText(s).width<=maxWidth)break;
+  fs-=3;
+ }while(fs>25);
+ c.fillText(s,x,y);
+}
+
+function rectangle(c,x,y,w,h,color,border=false){
+ c.fillStyle=color;
+ c.fillRect(x,y,w,h);
+ if(border){
+  c.strokeStyle="#D7C7B3";
+  c.lineWidth=3;
+  c.strokeRect(x,y,w,h);
+ }
+}
+
+function art(c,i,x,y,w,h){
+ const a=artwork[i];
+ if(!a)return;
+ const img=a.img;
+ const scale=Math.min(w/img.naturalWidth,h/img.naturalHeight);
+ const dw=img.naturalWidth*scale,dh=img.naturalHeight*scale;
+ c.drawImage(img,x-dw/2,y-dh/2,dw,dh);
+}
+
+function base(c){
+ rectangle(c,0,0,W,W,$("bg").value);
+ c.strokeStyle="#D7C7B3";
+ c.lineWidth=3;
+ c.strokeRect(65,65,1870,1870);
+ text(c,"DIGITAL DOWNLOAD",1000,1890,29);
+}
+
+function heading(c,t,sub){
+ text(c,t,1000,245,118,true);
+ text(c,sub,1000,380,39);
+ c.strokeStyle="#D7C7B3";
+ c.beginPath();c.moveTo(200,460);c.lineTo(1800,460);c.stroke();
+}
+
+function cell(c,i,x,y,w,h){
+ rectangle(c,x,y,w,h,"#FFFFFF",true);
+ art(c,i,x+w/2,y+h/2,w-45,h-45);
+}
+
+function render(c,page){
+ const title=$("title").value.trim()||"Clipart Collection";
+ const sub=$("subtitle").value.trim()||"DIGITAL CLIPART COLLECTION";
+ const pale=$("accent").value;
+ base(c);
+
+ if(page===0){
+  text(c,"THE BRIDAL EDITION",1000,180,37);
+  text(c,title,1000,330,165,true);
+  text(c,sub,1000,470,43);
+
+  for(let i=0;i<6;i++){
+   const x=390+(i%3)*610;
+   const y=850+Math.floor(i/3)*600;
+   c.fillStyle=pale;
+   c.beginPath();c.arc(x,y,245,0,Math.PI*2);c.fill();
+   art(c,i,x,y,475,475);
+  }
+
+  text(c,"13 ORIGINAL PNG DESIGNS",1000,1780,57,false,1750,true);
+ }
+
+ if(page===1){
+  heading(c,"The Complete Collection","13 INDIVIDUAL CLIPART DESIGNS");
+  for(let i=0;i<13;i++){
+   const col=i<12?i%4:1.5;
+   const row=i<12?Math.floor(i/4):3;
+   cell(c,i,100+col*455,525+row*338,420,302);
+  }
+ }
+
+ if(page===2){
+  heading(c,"Beautiful Little Details","A CLOSER LOOK AT YOUR ARTWORK");
+  for(let i=0;i<4;i++){
+   cell(c,i,165+(i%2)*880,545+Math.floor(i/2)*640,790,565);
+  }
+ }
+
+ if(page===3){
+  heading(c,"Create Something Beautiful","BRIDAL STATIONERY INSPIRATION");
+  rectangle(c,315,540,1370,1190,"#FFFFFF",true);
+  art(c,0,540,795,390,350);
+  art(c,1,1470,1450,390,350);
+  text(c,"You're Invited",1000,975,126,true);
+  text(c,"A SPECIAL CELEBRATION",1000,1130,42);
+  text(c,"WITH LOVE",1000,1270,74,true);
+  text(c,"INVITATION EXAMPLE ONLY",1000,1780,29);
+ }
+
+ if(page===4){
+  heading(c,"What's Included","YOUR DIGITAL CLIPART COLLECTION");
+  text(c,"13",755,910,280,true);
+  text(c,"INDIVIDUAL PNG FILES",755,1110,57,false,1300,true);
+  text(c,"INSTANT DIGITAL DOWNLOAD",755,1240,38);
+  for(let i=0;i<4;i++){
+   art(c,i,1420+(i%2)*250,835+Math.floor(i/2)*500,250,390);
+  }
+  text(c,"No physical product will be shipped",1000,1700,45,true);
+ }
+
+ if(page===5){
+  heading(c,"How It Works","THREE SIMPLE STEPS");
+  const steps=[
+   ["01","PURCHASE","Choose your digital collection"],
+   ["02","DOWNLOAD","Save your purchased files"],
+   ["03","CREATE","Make something beautiful"]
+  ];
+  for(let i=0;i<3;i++){
+   const y=595+i*425;
+   rectangle(c,235,y,1530,350,"#FFFFFF",true);
+   text(c,steps[i][0],480,y+165,120,true);
+   text(c,steps[i][1],1120,y+113,75,false,850,true);
+   text(c,steps[i][2],1120,y+229,38,false,850);
+  }
+ }
+
+ if(page===6){
+  heading(c,"Before You Create","DIGITAL PRODUCT INFORMATION");
+  const items=[
+   ["DIGITAL DOWNLOAD","No physical item is shipped"],
+   ["ORIGINAL PNG FILES","See listing for exact file specifications"],
+   ["LICENSE & USAGE","Review the listing's permitted-use terms"]
+  ];
+  for(let i=0;i<3;i++){
+   const y=590+i*425;
+   rectangle(c,225,y,1550,345,"#FFFFFF",true);
+   text(c,items[i][0],1000,y+110,66,false,1400,true);
+   text(c,items[i][1],1000,y+232,39,false,1400);
+  }
+ }
+
+ if(page===7){
+  heading(c,"Make It Something Blue",sub);
+  for(let i=0;i<13;i++){
+   const col=i<12?i%4:1.5;
+   const row=i<12?Math.floor(i/4):3;
+   const x=335+col*445;
+   const y=670+row*350;
+   c.fillStyle=pale;
+   c.beginPath();c.arc(x,y,150,0,Math.PI*2);c.fill();
+   art(c,i,x,y,290,290);
+  }
+  text(c,"13 ORIGINAL DESIGNS",1000,1810,50,false,1800,true);
+ }
+}
+
+// Generate each JPEG separately to reduce device memory usage.
+$("generate").onclick=async()=>{
+ if(working||artwork.length!==13)return;
+ working=true;
+ $("generate").disabled=true;
+ resetResults();
+
+ try{
+  const canvas=document.createElement("canvas");
+  canvas.width=W;canvas.height=W;
+  const c=canvas.getContext("2d",{alpha:false});
+  c.imageSmoothingEnabled=true;
+  c.imageSmoothingQuality="high";
+
+  for(let i=0;i<8;i++){
+   progress("Creating image "+(i+1)+" of 8...");
+   render(c,i);
+   const b=await canvasBlob(canvas,"image/jpeg",0.90);
+   exports.push({
+    name:String(i+1).padStart(2,"0")+"-"+pageNames[i].replaceAll(" ","-")+".jpg",
+    blob:b
+   });
+   await new Promise(r=>setTimeout(r,0));
+  }
+
+  progress("Packaging ZIP...");
+  zipBlob=await createZIP(exports);
+
+  const nav=$("pages");
+  nav.replaceChildren();
+  pageNames.forEach((name,i)=>{
+   const btn=document.createElement("button");
+   btn.textContent=(i+1)+" "+name;
+   btn.onclick=()=>showPage(i);
+   nav.append(btn);
+  });
+
+  $("results").hidden=false;
+  showPage(0);
+  progress("✓ All 8 images are ready. Preview and save below.");
+
+ }catch(err){
+  progress("Generation failed: "+err.message);
+ }finally{
+  working=false;
+  $("generate").disabled=false;
+ }
+};
+
+function showPage(i){
+ selected=i;
+ if(previewURL)URL.revokeObjectURL(previewURL);
+ previewURL=URL.createObjectURL(exports[i].blob);
+ $("preview").src=previewURL;
+ Array.from($("pages").children).forEach((b,n)=>{
+  b.classList.toggle("active",n===i);
+ });
+}
+
+// Standard ZIP writer, with no external libraries.
+function crcTable(){
+ const t=[];
+ for(let n=0;n<256;n++){
+  let c=n;
+  for(let k=0;k<8;k++)
+   c=(c&1)?0xEDB88320^(c>>>1):c>>>1;
+  t.push(c>>>0);
+ }
+ return t;
+}
+const CT=crcTable();
+
+function crc32(bytes){
+ let c=0xFFFFFFFF;
+ for(const b of bytes)c=CT[(c^b)&255]^(c>>>8);
+ return(c^0xFFFFFFFF)>>>0;
+}
+
+async function createZIP(items){
+ const enc=new TextEncoder();
+ const parts=[],directory=[];
+ let offset=0,dirSize=0;
+
+ for(const item of items){
+  const filename=enc.encode(item.name);
+  const data=new Uint8Array(await item.blob.arrayBuffer());
+  const sum=crc32(data);
+
+  const h=new Uint8Array(30+filename.length);
+  const v=new DataView(h.buffer);
+  v.setUint32(0,0x04034b50,true);
+  v.setUint16(4,20,true);
+  v.setUint32(14,sum,true);
+  v.setUint32(18,data.length,true);
+  v.setUint32(22,data.length,true);
+  v.setUint16(26,filename.length,true);
+  h.set(filename,30);
+  parts.push(h,data);
+
+  const d=new Uint8Array(46+filename.length);
+  const w=new DataView(d.buffer);
+  w.setUint32(0,0x02014b50,true);
+  w.setUint16(4,20,true);
+  w.setUint16(6,20,true);
+  w.setUint32(16,sum,true);
+  w.setUint32(20,data.length,true);
+  w.setUint32(24,data.length,true);
+  w.setUint16(28,filename.length,true);
+  w.setUint32(42,offset,true);
+  d.set(filename,46);
+  directory.push(d);
+
+  dirSize+=d.length;
+  offset+=h.length+data.length;
+ }
+
+ const end=new Uint8Array(22);
+ const v=new DataView(end.buffer);
+ v.setUint32(0,0x06054b50,true);
+ v.setUint16(8,items.length,true);
+ v.setUint16(10,items.length,true);
+ v.setUint32(12,dirSize,true);
+ v.setUint32(16,offset,true);
+
+ return new Blob([...parts,...directory,end],{type:"application/zip"});
+}
+
+// Native iOS sharing when supported; browser download otherwise.
+async function saveFile(blob,name){
+ const file=new File([blob],name,{type:blob.type});
+
+ if(navigator.share&&navigator.canShare&&
+    navigator.canShare({files:[file]})){
+  try{
+   await navigator.share({files:[file],title:name});
+   return;
+  }catch(err){
+   if(err.name==="AbortError")return;
+  }
+ }
+
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement("a");
+ a.href=url;
+ a.download=name;
+ document.body.append(a);
+ a.click();
+ a.remove();
+ setTimeout(()=>URL.revokeObjectURL(url),120000);
+ progress("Download requested. Check Safari Downloads or Files.");
+}
+
+$("saveOne").onclick=()=>{
+ if(exports[selected])
+  saveFile(exports[selected].blob,exports[selected].name);
+};
+
+$("saveAll").onclick=()=>{
+ if(zipBlob)
+  saveFile(zipBlob,"Etsy-Clipart-Listing-Images.zip");
+};
+
+for(const id of ["title","subtitle","dark","accent","bg"]){
+ $(id).addEventListener("input",()=>{
+  if(exports.length){
+   resetResults();
+   progress("Settings changed. Generate again to update your images.");
+  }
+ });
+}
+</script>
+</body>
+</html>
