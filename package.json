@@ -1,0 +1,12 @@
+{
+  "name": "etsy-image-maker",
+  "private": true,
+  "scripts": {
+    "test": "node tests/canvas.cjs",
+    "test:browser": "node tests/generator.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1",
+    "@napi-rs/canvas": "0.1.100"
+  }
+}

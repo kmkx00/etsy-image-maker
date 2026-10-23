@@ -13,7 +13,7 @@ h1{font-family:Georgia,serif;font-weight:normal;font-size:32px;margin-bottom:8px
 h2{font-size:18px;margin-top:0}
 .panel{background:white;border:1px solid #ddd5cb;border-radius:14px;padding:18px;margin:16px 0}
 label{display:block;font-weight:bold;font-size:13px;margin:12px 0 6px}
-input[type=text],input[type=file]{width:100%;padding:12px;border:1px solid #c9d2d9;border-radius:8px;font-size:16px}
+input[type=text],input[type=file],select{width:100%;padding:12px;border:1px solid #c9d2d9;border-radius:8px;font-size:16px}
 button{background:#425c73;color:white;border:0;border-radius:9px;padding:13px 16px;font-size:15px;font-weight:bold;width:100%;margin:7px 0}
 button:disabled{opacity:.4}
 .small{font-size:13px;color:#667786;line-height:1.6}
@@ -42,6 +42,11 @@ input[type=color]{width:46px;height:40px;display:block}
 <input id="files" type="file" accept=".png,image/png" multiple>
 <p id="status">No files selected.</p>
 <div id="thumbs"></div>
+<div id="patternPicker" hidden>
+<label for="pattern">Bonus pattern file</label>
+<select id="pattern"><option value="">Choose the bonus pattern</option></select>
+<p class="small">The other 12 files will be shown as clipart. Confirm the pattern here before generating.</p>
+</div>
 </section>
 
 <section class="panel">
@@ -72,9 +77,10 @@ input[type=color]{width:46px;height:40px;display:block}
 
 <script>
 const $=id=>document.getElementById(id);
-const W=2000;
+const DESIGN_SIZE=2000, W=3000;
+const COLLECTION_LABEL="12 PNG CLIPART ELEMENTS + BONUS PATTERN";
 const pageNames=[
-"Cover","All 13","Details","Invitation",
+"Cover","Contents","Details","Invitation",
 "File Info","Download","Usage","Showcase"
 ];
 let artwork=[],exports=[],zipBlob=null,selected=0;
@@ -83,6 +89,31 @@ let working=false;
 
 function status(s){$("status").textContent=s}
 function progress(s){$("progress").textContent=s}
+
+function patternIndex(){
+ const value=$("pattern").value;
+ return value===""?-1:Number(value);
+}
+
+function ready(){
+ const i=patternIndex();
+ return artwork.length===13&&Number.isInteger(i)&&i>=0&&i<artwork.length;
+}
+
+function setWorking(value){
+ working=value;
+ for(const id of ["files","title","subtitle","dark","accent","bg","pattern"])
+  $(id).disabled=value;
+ $("generate").disabled=value||!ready();
+}
+
+function snapshotSettings(){
+ return Object.freeze({
+  title:$("title").value.trim()||"Clipart Collection",
+  subtitle:$("subtitle").value.trim()||"DIGITAL CLIPART COLLECTION",
+  dark:$("dark").value,accent:$("accent").value,bg:$("bg").value
+ });
+}
 
 function readImage(blob){
  return new Promise((resolve,reject)=>{
@@ -115,42 +146,49 @@ async function preparePNG(file){
   const sw=img.naturalWidth,sh=img.naturalHeight;
   if(!sw||!sh)throw new Error("Invalid dimensions");
 
-  // Estimate the visible artwork bounds.
+  // Scan original-resolution alpha in short strips; retain even faint pixels.
+  // Strips avoid allocating another full-size RGBA copy on mobile devices.
   const sample=document.createElement("canvas");
-  sample.width=220;sample.height=220;
+  sample.width=sw;sample.height=Math.min(128,sh);
   const sc=sample.getContext("2d",{willReadFrequently:true});
-  sc.drawImage(img,0,0,220,220);
-  const pixels=sc.getImageData(0,0,220,220).data;
-
-  let left=220,top=220,right=-1,bottom=-1;
-  for(let y=0;y<220;y++){
-   for(let x=0;x<220;x++){
-    if(pixels[(y*220+x)*4+3]>15){
-     left=Math.min(left,x);top=Math.min(top,y);
-     right=Math.max(right,x);bottom=Math.max(bottom,y);
+  let left=sw,top=sh,right=-1,bottom=-1;
+  for(let row=0;row<sh;row+=sample.height){
+   const height=Math.min(sample.height,sh-row);
+   sc.clearRect(0,0,sw,sample.height);
+   sc.drawImage(img,0,row,sw,height,0,0,sw,height);
+   const pixels=sc.getImageData(0,0,sw,height).data;
+   for(let y=0;y<height;y++){
+    for(let x=0;x<sw;x++){
+     if(pixels[(y*sw+x)*4+3]>0){
+      left=Math.min(left,x);top=Math.min(top,row+y);
+      right=Math.max(right,x);bottom=Math.max(bottom,row+y);
+     }
     }
    }
+   if(row%512===0)await new Promise(r=>setTimeout(r,0));
   }
+  sample.width=sample.height=1;
 
   if(right<0)throw new Error("Image appears fully transparent");
 
-  const x=Math.max(0,(left-1)*sw/220);
-  const y=Math.max(0,(top-1)*sh/220);
-  const bw=Math.min(sw-x,(right-left+3)*sw/220);
-  const bh=Math.min(sh-y,(bottom-top+3)*sh/220);
+  const padding=Math.max(2,Math.ceil(Math.max(sw,sh)*0.005));
+  const x=Math.max(0,left-padding), y=Math.max(0,top-padding);
+  const bw=Math.min(sw,right+padding+1)-x;
+  const bh=Math.min(sh,bottom+padding+1)-y;
 
   const c=document.createElement("canvas");
-  c.width=1100;c.height=1100;
+  c.width=1600;c.height=1600;
   const ctx=c.getContext("2d");
-  const scale=Math.min(1000/bw,1000/bh);
+  const scale=Math.min(1500/bw,1500/bh);
   const dw=bw*scale,dh=bh*scale;
   ctx.imageSmoothingEnabled=true;
   ctx.imageSmoothingQuality="high";
-  ctx.drawImage(img,x,y,bw,bh,550-dw/2,550-dh/2,dw,dh);
+  ctx.drawImage(img,x,y,bw,bh,800-dw/2,800-dh/2,dw,dh);
 
   const blob=await canvasBlob(c,"image/png");
   const result=await readImage(blob);
-  return {...result,name:file.name};
+  c.width=c.height=1;
+  return {...result,name:file.name,bounds:{x,y,width:bw,height:bh}};
  }finally{
   URL.revokeObjectURL(source.url);
   source.img.src="";
@@ -159,7 +197,10 @@ async function preparePNG(file){
 
 function resetResults(){
  exports=[];zipBlob=null;
+ selected=0;
  $("results").hidden=true;
+ $("pages").replaceChildren();
+ $("preview").removeAttribute("src");
  if(previewURL){
   URL.revokeObjectURL(previewURL);
   previewURL=null;
@@ -168,11 +209,12 @@ function resetResults(){
 
 $("files").addEventListener("change",async e=>{
  if(working)return;
- working=true;
+ setWorking(true);
  resetResults();
- $("generate").disabled=true;
+ $("patternPicker").hidden=true;
+ $("pattern").replaceChildren(new Option("Choose the bonus pattern",""));
 
- artwork.forEach(a=>URL.revokeObjectURL(a.url));
+ artwork.forEach(a=>{URL.revokeObjectURL(a.url);a.img.src=""});
  artwork=[];
  $("thumbs").replaceChildren();
 
@@ -181,7 +223,7 @@ $("files").addEventListener("change",async e=>{
 
  if(files.length!==13){
   status("Please select exactly 13 PNG files. Selected: "+files.length);
-  working=false;
+  setWorking(false);
   return;
  }
 
@@ -211,22 +253,24 @@ $("files").addEventListener("change",async e=>{
   }
  }
 
- working=false;
-
  if(errors.length){
   status("Read "+artwork.length+" of 13 files.\nProblem files:\n"+errors.join("\n"));
   progress("Please replace the problem files and select all 13 again.");
  }else{
+  artwork.forEach((a,i)=>$("pattern").add(new Option(a.name,String(i))));
+  const candidates=artwork.map((a,i)=>/pattern|seamless|bonus/i.test(a.name)?i:-1).filter(i=>i>=0);
+  if(candidates.length===1)$("pattern").value=String(candidates[0]);
+  $("patternPicker").hidden=false;
   status("✓ All 13 original PNG files are ready!");
-  progress("Tap Generate My 8 Etsy Images.");
-  $("generate").disabled=false;
+  progress(ready()?"Confirm the bonus pattern, then tap Generate.":"Choose the bonus pattern file above, then tap Generate.");
  }
+ setWorking(false);
 });
 
 function text(c,s,x,y,size,serif=false,maxWidth=1750,bold=false){
  c.textAlign="center";
  c.textBaseline="middle";
- c.fillStyle=$("dark").value;
+ c.fillStyle=c.collectionSettings.dark;
  let fs=size;
  do{
   c.font=(bold?"bold ":"")+fs+"px "+(serif?"Georgia,serif":"Arial,sans-serif");
@@ -246,8 +290,8 @@ function rectangle(c,x,y,w,h,color,border=false){
  }
 }
 
-function art(c,i,x,y,w,h){
- const a=artwork[i];
+function drawArt(c,i,x,y,w,h,items){
+ const a=items[i];
  if(!a)return;
  const img=a.img;
  const scale=Math.min(w/img.naturalWidth,h/img.naturalHeight);
@@ -256,7 +300,7 @@ function art(c,i,x,y,w,h){
 }
 
 function base(c){
- rectangle(c,0,0,W,W,$("bg").value);
+ rectangle(c,0,0,DESIGN_SIZE,DESIGN_SIZE,c.collectionSettings.bg);
  c.strokeStyle="#D7C7B3";
  c.lineWidth=3;
  c.strokeRect(65,65,1870,1870);
@@ -270,15 +314,16 @@ function heading(c,t,sub){
  c.beginPath();c.moveTo(200,460);c.lineTo(1800,460);c.stroke();
 }
 
-function cell(c,i,x,y,w,h){
+function drawCell(c,i,x,y,w,h,items){
  rectangle(c,x,y,w,h,"#FFFFFF",true);
- art(c,i,x+w/2,y+h/2,w-45,h-45);
+ drawArt(c,i,x+w/2,y+h/2,w-45,h-45,items);
 }
 
-function render(c,page){
- const title=$("title").value.trim()||"Clipart Collection";
- const sub=$("subtitle").value.trim()||"DIGITAL CLIPART COLLECTION";
- const pale=$("accent").value;
+function render(c,page,settings,items){
+ c.collectionSettings=settings;
+ const title=settings.title, sub=settings.subtitle, pale=settings.accent;
+ const art=(...args)=>drawArt(...args,items);
+ const cell=(...args)=>drawCell(...args,items);
  base(c);
 
  if(page===0){
@@ -294,16 +339,17 @@ function render(c,page){
    art(c,i,x,y,475,475);
   }
 
-  text(c,"13 ORIGINAL PNG DESIGNS",1000,1780,57,false,1750,true);
+  text(c,COLLECTION_LABEL,1000,1780,48,false,1750,true);
  }
 
  if(page===1){
-  heading(c,"The Complete Collection","13 INDIVIDUAL CLIPART DESIGNS");
-  for(let i=0;i<13;i++){
-   const col=i<12?i%4:1.5;
-   const row=i<12?Math.floor(i/4):3;
-   cell(c,i,100+col*455,525+row*338,420,302);
+  heading(c,"The Complete Collection","12 PNG CLIPART ELEMENTS");
+  for(let i=0;i<12;i++){
+   cell(c,i,100+(i%4)*455,525+Math.floor(i/4)*338,420,302);
   }
+  cell(c,12,200,1570,280,250);
+  text(c,"BONUS PATTERN",1190,1650,52,false,1100,true);
+  text(c,"Included separately from the 12 clipart elements",1190,1740,33,false,1100);
  }
 
  if(page===2){
@@ -326,9 +372,10 @@ function render(c,page){
 
  if(page===4){
   heading(c,"What's Included","YOUR DIGITAL CLIPART COLLECTION");
-  text(c,"13",755,910,280,true);
-  text(c,"INDIVIDUAL PNG FILES",755,1110,57,false,1300,true);
-  text(c,"INSTANT DIGITAL DOWNLOAD",755,1240,38);
+  text(c,"12",755,910,280,true);
+  text(c,"PNG CLIPART ELEMENTS",755,1110,53,false,1100,true);
+  text(c,"+ BONUS PATTERN",755,1230,47,false,1100,true);
+  text(c,"INSTANT DIGITAL DOWNLOAD",755,1340,38);
   for(let i=0;i<4;i++){
    art(c,i,1420+(i%2)*250,835+Math.floor(i/2)*500,250,390);
   }
@@ -368,38 +415,45 @@ function render(c,page){
 
  if(page===7){
   heading(c,"Make It Something Blue",sub);
-  for(let i=0;i<13;i++){
-   const col=i<12?i%4:1.5;
-   const row=i<12?Math.floor(i/4):3;
+  for(let i=0;i<12;i++){
+   const col=i%4;
+   const row=Math.floor(i/4);
    const x=335+col*445;
    const y=670+row*350;
    c.fillStyle=pale;
    c.beginPath();c.arc(x,y,150,0,Math.PI*2);c.fill();
    art(c,i,x,y,290,290);
   }
-  text(c,"13 ORIGINAL DESIGNS",1000,1810,50,false,1800,true);
+  cell(c,12,220,1600,270,240);
+  text(c,"12 CLIPART ELEMENTS",1190,1660,50,false,1100,true);
+  text(c,"+ BONUS PATTERN",1190,1750,42,false,1100);
  }
 }
 
 // Generate each JPEG separately to reduce device memory usage.
 $("generate").onclick=async()=>{
- if(working||artwork.length!==13)return;
- working=true;
- $("generate").disabled=true;
+ if(working||!ready())return;
+ const settings=snapshotSettings();
+ const bonus=patternIndex();
+ const items=[...artwork.filter((_,i)=>i!==bonus),artwork[bonus]];
+ setWorking(true);
  resetResults();
+ const pending=[];
+ let canvas;
 
  try{
-  const canvas=document.createElement("canvas");
+  canvas=document.createElement("canvas");
   canvas.width=W;canvas.height=W;
   const c=canvas.getContext("2d",{alpha:false});
   c.imageSmoothingEnabled=true;
   c.imageSmoothingQuality="high";
+  c.scale(W/DESIGN_SIZE,W/DESIGN_SIZE);
 
   for(let i=0;i<8;i++){
    progress("Creating image "+(i+1)+" of 8...");
-   render(c,i);
+   render(c,i,settings,items);
    const b=await canvasBlob(canvas,"image/jpeg",0.90);
-   exports.push({
+   pending.push({
     name:String(i+1).padStart(2,"0")+"-"+pageNames[i].replaceAll(" ","-")+".jpg",
     blob:b
    });
@@ -407,7 +461,10 @@ $("generate").onclick=async()=>{
   }
 
   progress("Packaging ZIP...");
-  zipBlob=await createZIP(exports);
+  const completedZIP=await createZIP(pending);
+  if(pending.length!==pageNames.length)throw new Error("Incomplete image set");
+  exports=pending;
+  zipBlob=completedZIP;
 
   const nav=$("pages");
   nav.replaceChildren();
@@ -423,14 +480,16 @@ $("generate").onclick=async()=>{
   progress("✓ All 8 images are ready. Preview and save below.");
 
  }catch(err){
+  resetResults();
   progress("Generation failed: "+err.message);
  }finally{
-  working=false;
-  $("generate").disabled=false;
+  if(canvas)canvas.width=canvas.height=1;
+  setWorking(false);
  }
 };
 
 function showPage(i){
+ if(!Number.isInteger(i)||!exports[i])return;
  selected=i;
  if(previewURL)URL.revokeObjectURL(previewURL);
  previewURL=URL.createObjectURL(exports[i].blob);
@@ -543,12 +602,14 @@ $("saveAll").onclick=()=>{
   saveFile(zipBlob,"Etsy-Clipart-Listing-Images.zip");
 };
 
-for(const id of ["title","subtitle","dark","accent","bg"]){
+for(const id of ["title","subtitle","dark","accent","bg","pattern"]){
  $(id).addEventListener("input",()=>{
+  if(working)return;
   if(exports.length){
    resetResults();
    progress("Settings changed. Generate again to update your images.");
   }
+  $("generate").disabled=!ready();
  });
 }
 </script>
