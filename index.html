@@ -59,7 +59,7 @@ input[type=color]{width:46px;height:40px;display:block}
 <div class="colors">
 <label>Text <input type="color" id="dark" value="#425C73"></label>
 <label>Accent <input type="color" id="accent" value="#E6EEF3"></label>
-<label>Background <input type="color" id="bg" value="#F9F7F3"></label>
+<label>Background <input type="color" id="bg" value="#F7F2E9"></label>
 </div>
 <button id="generate" disabled>Generate My 8 Etsy Images</button>
 <p id="progress">Upload your artwork to begin.</p>
@@ -188,7 +188,8 @@ async function preparePNG(file){
   const blob=await canvasBlob(c,"image/png");
   const result=await readImage(blob);
   c.width=c.height=1;
-  return {...result,name:file.name,bounds:{x,y,width:bw,height:bh}};
+  return {...result,name:file.name,bounds:{x,y,width:bw,height:bh},
+   visibleRect:{x:800-dw/2,y:800-dh/2,width:dw,height:dh}};
  }finally{
   URL.revokeObjectURL(source.url);
   source.img.src="";
@@ -319,28 +320,67 @@ function drawCell(c,i,x,y,w,h,items){
  drawArt(c,i,x+w/2,y+h/2,w-45,h-45,items);
 }
 
+// Fixed editorial recipe in 3000px coordinates. Only the cover uses this layout.
+// Names identify this collection's focal pieces; index fallback supports other sets.
+const COVER_LAYOUT=[
+ {role:"bow",match:/bluebow/i,index:0,x:510,y:470,w:710,h:650},
+ {role:"clutch",match:/bridalclutch/i,index:7,x:1480,y:420,w:690,h:450},
+ {role:"heels",match:/bridalheels/i,index:1,x:2460,y:480,w:670,h:670},
+ {role:"ribbon",match:/blueribbon/i,index:9,x:1390,y:815,w:1080,h:350},
+ {role:"sprig",match:/floralsprig/i,index:8,x:2110,y:920,w:270,h:470},
+ {role:"coupe",match:/champagnecoupe/i,index:3,x:440,y:1280,w:620,h:650},
+ {role:"perfume",match:/perfumebottle/i,index:4,x:2570,y:1390,w:530,h:560},
+ {role:"bouquet",match:/bridalbouquet/i,index:2,x:680,y:2240,w:1080,h:960},
+ {role:"ring",match:/ringbox/i,index:6,x:1480,y:2380,w:450,h:530},
+ {role:"gloves",match:/bridalgloves/i,index:5,x:1940,y:2090,w:400,h:430},
+ {role:"cake",match:/weddingcake/i,index:11,x:2490,y:2320,w:680,h:760},
+ {role:"divider",match:/pearlribbondivider/i,index:10,x:1500,y:1870,w:1050,h:105}
+];
+
+function coverPlacements(items){
+ const available=items.slice(0,12), used=new Set();
+ return COVER_LAYOUT.map(slot=>{
+  let index=available.findIndex((a,i)=>!used.has(i)&&slot.match.test(a.name));
+  if(index<0)index=!used.has(slot.index)?slot.index:available.findIndex((_,i)=>!used.has(i));
+  used.add(index);
+  return {...slot,index};
+ });
+}
+
+function coverArt(c,a,slot){
+ if(!a)return;
+ const r=a.visibleRect||{x:0,y:0,width:a.img.naturalWidth,height:a.img.naturalHeight};
+ const scale=Math.min(slot.w/r.width,slot.h/r.height);
+ const w=r.width*scale,h=r.height*scale;
+ c.drawImage(a.img,r.x,r.y,r.width,r.height,slot.x-w/2,slot.y-h/2,w,h);
+}
+
+function renderCover(c,settings,items){
+ c.save();
+ c.scale(DESIGN_SIZE/3000,DESIGN_SIZE/3000);
+ rectangle(c,0,0,3000,3000,settings.bg);
+ for(const slot of coverPlacements(items))coverArt(c,items[slot.index],slot);
+ // Large real text occupies a protected central area; artwork stays around it.
+ const name=settings.title.toUpperCase();
+ if(/^SOMETHING\s+BLUE$/.test(name)){
+  text(c,"SOMETHING",1500,1245,153,true,1320);
+  text(c,"BLUE",1500,1470,265,true,1280);
+ }else{
+  text(c,name,1500,1350,165,true,1320);
+ }
+ text(c,"WATERCOLOR CLIPART COLLECTION",1500,1700,37,false,1300);
+ text(c,COLLECTION_LABEL,1500,2770,50,false,2500,true);
+ text(c,"DIGITAL DOWNLOAD",1500,2890,28,false,1900);
+ c.restore();
+}
+
 function render(c,page,settings,items){
  c.collectionSettings=settings;
  const title=settings.title, sub=settings.subtitle, pale=settings.accent;
  const art=(...args)=>drawArt(...args,items);
  const cell=(...args)=>drawCell(...args,items);
+ if(page===0){renderCover(c,settings,items);return}
  base(c);
-
- if(page===0){
-  text(c,"THE BRIDAL EDITION",1000,180,37);
-  text(c,title,1000,330,165,true);
-  text(c,sub,1000,470,43);
-
-  for(let i=0;i<6;i++){
-   const x=390+(i%3)*610;
-   const y=850+Math.floor(i/3)*600;
-   c.fillStyle=pale;
-   c.beginPath();c.arc(x,y,245,0,Math.PI*2);c.fill();
-   art(c,i,x,y,475,475);
-  }
-
-  text(c,COLLECTION_LABEL,1000,1780,48,false,1750,true);
- }
 
  if(page===1){
   heading(c,"The Complete Collection","12 PNG CLIPART ELEMENTS");

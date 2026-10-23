@@ -19,7 +19,7 @@ function Option(text,value){this.text=text;this.value=value}
 const elements={};
 const get=id=>elements[id]??=new Element();
 get('title').value='Something Blue';get('subtitle').value='BRIDAL CLIPART COLLECTION';
-get('dark').value='#425c73';get('accent').value='#e6eef3';get('bg').value='#f9f7f3';
+get('dark').value='#425c73';get('accent').value='#e6eef3';get('bg').value='#f7f2e9';
 const document={getElementById:get,createElement(tag){
  if(tag!=='canvas')return new Element();
  const c=createCanvas(1,1);
@@ -58,6 +58,19 @@ const run=code=>vm.runInContext(code,context);
  assert(bounds.x<=20&&bounds.y<=30,'Faint pixels must be inside the retained crop');
  assert(bounds.x+bounds.width>=2520&&bounds.y+bounds.height>=2520);
  console.log('PASS: full-resolution alpha=1 details retained; 12 clipart + bonus selection.');
+ const recipe=run('coverPlacements(artwork)');
+ assert.equal(new Set(Array.from(recipe,s=>s.index)).size,12);
+ assert(recipe.every(s=>s.index>=0&&s.index<12),'Cover never places the bonus as clipart');
+ for(const slot of recipe){
+  assert(slot.x-slot.w/2>=0&&slot.y-slot.h/2>=0);
+  assert(slot.x+slot.w/2<=3000&&slot.y+slot.h/2<=3000);
+ }
+ const named=Array.from({length:12},(_,i)=>({name:['BlueBow','BridalHeels','BridalBouquet','ChampagneCoupe','PerfumeBottle','BridalGloves','RingBox','BridalClutch','BlueFloralSprig','BlueRibbon','PearlRibbonDivider','WeddingCake'][i]+'.png'})).reverse();
+ context.namedCoverItems=named;
+ const matched=run('coverPlacements(namedCoverItems)');
+ assert.equal(named[matched.find(s=>s.role==='bouquet').index].name,'BridalBouquet.png');
+ assert.equal(new Set(Array.from(matched,s=>s.index)).size,12);
+ console.log('PASS: cover places each illustration once, stays inside the canvas and resolves named focal art after reordering.');
 
  run(`windowlessSettings=[]; realBlob=canvasBlob; realRender=render;
  render=(c,i,settings,items)=>{windowlessSettings.push(settings.title);realRender(c,i,settings,items)};
